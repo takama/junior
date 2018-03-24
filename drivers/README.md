@@ -1,3 +1,3 @@
-# The Cyrillic Keyboard/Fonts driver
+# The drivers
 
-When entering texts or programs, it became necessary to create a keyboard and fonts driver for full Cyrillic support.
+One of them Cyrillic Keyboard/Fonts driver. When we were entering texts or programs, we necessary to use a keyboard and a fonts driver for full Cyrillic support.

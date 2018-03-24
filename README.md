@@ -10,14 +10,14 @@ When I was 24 old, I had some programming experience related to `assembler x86`,
 
 This project was developed in connection with the need for data transfer between the PC. In those deaf times, there were no any wide-used networks between nearby computers. It was hard to transfer information between PC on floppy disks due to the unreliability of the floppy disks themselves, the compatibility of disk drives and the possibility of getting the virus in the MBR. A network was planned for the technology of the transfer of a marker using a coaxial cable and homemade network cards.
 
-## The Cyrillic Keyboard/Fonts driver
+## The drivers
 
-When entering texts or programs, it became necessary to create a keyboard and fonts driver for full Cyrillic support.
+One of them Cyrillic Keyboard/Fonts driver. When we were entering texts or programs, we necessary to use a keyboard and a fonts driver for full Cyrillic support.
 
-## Experiments with MBR and protection against the spread of MBR viruses
+## Fun experiments
 
-In the period when I was studying the process of loading the operating system, I was interested in research in this area.
+In the period when I was studying the process of loading the operating system with MBR and protection against the spread of MBR viruses. I was interested in research in this area.
 
-## The utilities which developed on demand
+## The utilities
 
-Just auxiliary utilities to calculate CRC 16/32
+Just auxiliary utilities which developed on demand. There are CLI tools to calculate CRC 16/32

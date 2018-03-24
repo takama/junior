@@ -1,3 +1,3 @@
-# The utilities which developed on demand
+# The utilities
 
-Just auxiliary utilities to calculate CRC 16/32
+Just auxiliary utilities which developed on demand. There are CLI tools to calculate CRC 16/32
