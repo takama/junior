@@ -1,0 +1,1792 @@
+(* Main module *)
+
+sameCS   = 1 - ( (model / 1) & 1 )
+sameDS   = 1 - ( (model / 2) & 1 )
+NearPtr  = 1 - ( (model / 4) & 1 )
+RegParam = (model / 16) & 1
+
+(*%F sameCS *)
+frame   =    6
+bxframe =    4                      (* bx parameter offset *)
+(*%E *)
+
+(*%T sameCS *)
+frame   =   4
+bxframe =   2                       (* bx parameter offset *)
+(*%E *)
+
+sframe    = 4
+sbxframe  = 2
+
+(*---------*)
+  module me
+(*---------*)
+
+(*------------------------------------------------------------------------*)
+(*---- инициализация Intel 8250 ------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _init_8250:
+
+(* void init_8250( unsigned port, unsigned speed ) *)
+
+(*%F RegParam *)
+port    = frame
+speed   = 2 + frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di,[bp][port]       (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    dx
+        push    es
+        mov     ax, 40H
+        mov     es, ax
+        mov     dx, es:[di]
+(*------ инициализируем регистры делителя скорости обмена  *)
+        add     dx, 3               (* указываем на регистр контроля линии *)
+        mov     al, 80H             (* устанавливаем бит 7 *)
+        out     dx, al              (* посылаем байт *)
+        dec     dx                  (* указываем на старший байт делителя *)
+        dec     dx                  (* скорости обмена *)
+        mov     al, 0               (* старший байт *)
+        out     dx, al              (* посылаем старший байт  *)
+        dec     dx                  (* указываем на младший байт делителя *)
+(*%F RegParam *)
+        mov     al, [bp][speed]     (* младший байт делителя *)
+(*%E *)
+(*%T RegParam *)
+        mov     al, bl
+(*%E *)
+        out     dx, al              (* посылаем младший байт *)
+(*------ инициализируем регистр контроля линии *)
+        xor     al, al              (* обнуляем al *)
+        or      al, 3               (* длина данных 8 бит *)
+        or      al, 4               (* 2 стоп бита *)
+        or      al, 0               (* нечетно *)
+        or      al, 0               (* четность отменена *)
+        add     dx, 3               (* указывает на регистр контроля линии *)
+        out     dx, al              (* посылаем инициализационное значение *)
+(*------ инициализируем регистр разрешения прерывания *)
+        dec     dx                  (* указывает на регистр разрешения *)
+        dec     dx                  (* прерывания *)
+        mov     al, 0               (* запрет прерываний *)
+        out     dx, al              (* посылаем байт *)
+        pop     es
+        pop     dx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- передача данных в Intel 8250 --------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _send_8250:
+
+(* unsigned send_8250( unsigned port, unsigned byte ) *)
+
+(*%F RegParam *)
+port    = frame
+byte    = 2 + frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di, [bp][port]      (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    dx
+        push    es
+        mov     ax, 40H
+        mov     es, ax              (* es указывает на область данных BIOS *)
+        mov     dx, es:[di]
+        add     dx, 5               (* указываем на регистр статуса линии *)
+        in      al, dx              (* получаем байт статуса *)
+        test    al, 1EH             (* проверяем на ошибку *)
+        mov     ah, al
+        jnz     sender              (* если есть, то на обработку ошибки *)
+        test    al, 20H             (* проверяем готовность к передаче *)
+        mov     ah, 20H
+        jz      sender
+        sub     dx, 5               (* адрес регистра хранения передатчика *)
+(*%F RegParam *)
+        mov     al, [bp][byte]
+(*%E *)
+(*%T RegParam *)
+        mov     al, bl
+(*%E *)
+        out     dx, al              (* посылаем символ *)
+        xor     ax, ax              (* обнуляем ax *)
+sender:
+        pop     es
+        pop     dx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- получение данных в Intel 8250 -------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _receive_8250:
+
+(* unsigned receive_8250( unsigned port ) *)
+
+(*%F RegParam *)
+port    = frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di, [bp][port]      (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    dx
+        push    es
+        mov     ax, 40H
+        mov     es, ax              (* es указывает на область данных BIOS *)
+        mov     dx, es:[di]
+        add     dx, 5               (* указываем на регистр статуса линии *)
+        in      al, dx              (* получаем байт статуса *)
+        test    al, 1EH             (* проверяем на ошибку *)
+        mov     ah, al
+        jnz     recer               (* если есть, то на обработку ошибки *)
+        test    al, 1               (* проверяем, получены ли данные *)
+        mov     ah, 1
+        jz      recer
+        sub     dx, 5               (* адрес регистра хранения передатчика *)
+        in      al, dx              (* принимаем символ *)
+        xor     ah, ah              (* обнуляем ah *)
+recer:
+        pop     es
+        pop     dx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- инициализация последовательного порта Intel 8251 ------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _init_8251 :
+
+(* void init_8251( unsigned port, unsigned speed ) *)
+
+(*%F RegParam *)
+port    = frame
+speed   = 2 + frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di,[bp][port]       (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    cx
+        push    dx
+        push	si
+        push	ds
+        push	cs
+        pop		ds
+        shl     di, 1
+        shl     di, 1
+        inc     di
+        mov     si, load_r
+        add     si, di
+        lodsb
+        mov     dx, 27BH            (* SYN1 - регистр команд *)
+        out     dx, al              (* инициализация канала *)
+        xor     cx, cx              (* пауза *)
+lp1:
+        loop    lp1
+        lodsw	
+        mov     dx, ax
+(*%F RegParam *)
+        mov     al, [bp][speed]     (* младшший байт делителя *)
+(*%E *)
+(*%T RegParam *)
+        mov     al, bl
+(*%E *)
+        out     dx, al              (* инициализация счетчика *)
+
+        mov     dx, 2B1H
+        dec     di
+        shr     di, 1
+        add     dx, di              (* dx = регистр команд 8251 *)
+        mov     al, 37H             (* сброс состояния *)
+        out     dx, al
+lp2:
+        loop    lp2                 (* пауза *)
+        mov     al, 40H             (* инициализация 8251 *)
+        out     dx, al
+lp3:
+        loop    lp3                 (* пауза *)
+        mov     al, 0CEH            (* задание режима  *)
+        out     dx, al
+lp4:
+        loop    lp4                 (* пауза *)
+        mov     al, 037H            (* команда обмена данными *)
+        out     dx, al
+        pop     ds
+        pop     si
+        pop     dx
+        pop     cx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+load_r:
+(*----- данные для порта COM1 --------------------------------------------*)
+         db     00H
+         db     16H
+         dw     0278H
+(*----- данные для порта ИРПС1 -------------------------------------------*)
+         db     00H
+         db     56H
+         dw     0279H
+(*----- данные для порта ИРПС2 -------------------------------------------*)
+         db     00H
+         db     56H
+         dw     0279H
+(*----- данные для порта ИРПС3 -------------------------------------------*)
+         db      00H
+         db      56H
+         dw      0279H
+(*----- данные для порта ИРПС4 -------------------------------------------*)
+         db      00H
+         db      96H
+         dw      027AH
+(*----- данные для порта ИРПС5 -------------------------------------------*)
+         db      00H
+         db      96H
+         dw      027AH
+(*----- данные для порта ИРПС6 -------------------------------------------*)
+         db      00H
+         db      16H
+         dw      0278H
+
+(*------------------------------------------------------------------------*)
+(*---- передача данных в последовательный порт Intel 8251 ----------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _send_8251 :
+
+(* unsigned send_8251( unsigned port, unsigned byte ) *)
+
+(*%F RegParam *)
+port    = frame
+byte    = 2 + frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di, [bp][port]      (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    dx
+        shl     di, 1
+        mov     dx, 2B1H
+        add     dx, di              (* указываем на регистр статуса 8251 *)
+        in      al, dx              (* получаем байт статуса *)
+        test    al, 38H             (* проверяем на ошибку *)
+        mov     ah, al
+        jnz     sender              (* если есть, то на обработку ошибки *)
+        test    al, 1               (* проверяем готовность к передаче *)
+        mov     ah, 1
+        jz      sender
+        dec     dx                  (* адрес регистра хранения передатчика *)
+(*%F RegParam *)
+        mov     al, [bp][byte]
+(*%E *)
+(*%T RegParam *)
+        mov     al, bl
+(*%E *)
+        out     dx, al              (* посылаем символ *)
+        xor     ax, ax              (* обнуляем ax *)
+sender:
+        pop     dx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- получение данных из последовательного порта Intel 8251 ------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _receive_8251 :
+
+(* unsigned receive_8251( unsigned port ) *)
+
+(*%F RegParam *)
+port    = frame
+
+        push    bp
+        mov     bp, sp
+        push    di
+        mov     di, [bp][port]  (* получаем базовый адрес порта *)
+(*%E *)
+(*%T RegParam *)
+        push    di
+        mov     di, ax
+(*%E *)
+        push    dx
+        shl     di, 1
+        mov     dx, 2B1H
+        add     dx, di              (* указываем на регистр статуса 8251 *)
+        in      al, dx              (* получаем байт статуса *)
+        test    al, 38H             (* проверяем на ошибку *)
+        mov     ah, al
+        jnz     recer               (* если есть, то на обработку ошибки *)
+        test    al, 2               (* проверяем, получены ли данные *)
+        mov     ah, 2
+        jz      recer
+        dec     dx                  (* адрес регистра хранения передатчика *)
+        in      al, dx              (* принимаем символ *)
+        xor     ah, ah              (* обнуляем ah *)
+recer:
+        pop     dx
+        pop     di
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- создание файла ----------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _creat_file :
+
+(* int creat_file( char *path ) *)
+
+(*%F RegParam *)
+path	= frame
+
+    	push 	bp
+        mov     bp, sp
+(*%E *)
+        push    cx
+        push    dx
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+        mov     dx, ax              (* смещение имени файла *)
+(*%F NearPtr *)
+        mov     ds, bx              (* сегмент имени файла *)
+(*%E *)
+(*%E *)
+(*%F RegParam *)
+(*%F NearPtr *)
+    	lds  	dx, [bp][path]      (* имя файла *)
+(*%E *)
+(*%T NearPtr *)
+    	mov  	dx, [bp][path]
+(*%E *)
+(*%E *)
+        mov     ah, 3CH             (* функция создание файла *)
+    	mov  	cx, 0               (* атрибут файла *)
+        int     21H                 (* обращение к прерыванию 21 *)
+    	jnc  	creatOK
+    	mov  	ax, -1              (* возврат -1, если ошибка *)
+creatOK:
+(*%F NearPtr *)
+    	pop  	ds
+(*%E *)
+    	pop  	dx
+   	 	pop  	cx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- открытие файла ----------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _open_file :
+
+(* int open_file( char *path, int mode ) *)
+
+(*%F RegParam *)
+path	= frame
+(*%F NearPtr *)
+mode    = 4+frame
+(*%E *)
+(*%T NearPtr *)
+mode    = 2+frame
+(*%E *)
+
+    	push 	bp
+        mov     bp, sp
+(*%E*)	
+        push    dx
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+        mov     dx, ax              (* смещение имени файла *)
+(*%F NearPtr *)
+        mov     ds, bx              (* сегмент имени файла *)
+        mov     al, cl              (* код доступа файла *)
+(*%E *)	
+(*%T NearPtr *)
+        mov     al, bl              (* код доступа файла *)
+(*%E *)	
+(*%E *)
+(*%F RegParam *)
+(*%F NearPtr *)
+    	lds  	dx, [bp][path]      (* имя файла *)
+(*%E *)
+(*%T NearPtr *)
+    	mov  	dx, [bp][path]
+(*%E *)
+        mov     al, [bp][mode]      (* код доступа файла *)
+(*%E *)
+        mov     ah, 3DH             (* функция открытия файла *)
+        int     21H                 (* обращение к прерыванию 21 *)
+    	jnc  	openOK
+    	mov  	ax, -1              (* возврат -1, если ошибка *)
+openOK:
+(*%F NearPtr *)
+    	pop  	ds
+(*%E *)
+    	pop  	dx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- закрытие файла ----------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _close_file :
+
+(* int close_file( int handle ) *)
+
+(*%F RegParam *)
+handle	= frame
+
+    	push 	bp
+        mov     bp, sp
+(*%E*)
+        push    bx
+(*%T RegParam *)
+        mov     bx, ax              (* системный номер файла *)
+(*%E *)
+(*%F RegParam *)
+    	mov  	bx, [bp][handle]    (* системный номер файла *)
+(*%E *)
+        mov     ah, 3EH             (* функция закрытия файла *)
+        int     21H                 (* обращение к прерыванию 21 *)
+    	jnc  	closeOK
+    	mov  	ax, -1              (* возврат -1, если ошибка *)
+closeOK:
+        xor     ax, ax
+    	pop  	bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret      0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- чтение файла ------------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _read_file :
+
+(* int read_file(int handle, void *buffer, int num) *)
+
+(*%F RegParam *)
+handle  = frame
+buffer  = 2+frame
+(*%F NearPtr *)
+num     = 6+frame
+(*%E *)
+(*%T NearPtr *)
+num     = 4+frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+        push    bx
+    	push 	cx
+        push    dx
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     ds, cx              (* сегмент адреса буфера *)
+        mov     cx, dx              (* количество байтов для чтения *)
+        mov     dx, bx              (* смещение адреса буфера *)
+        mov     bx, ax              (* системный номер файла *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, bx              (* смещение адреса буфера *)
+        mov     bx, ax              (* системный номер файла *)
+(*%E *)                             (* cx = cx *)
+(*%E *)
+(*%F RegParam *)
+        mov     bx, [bp][handle]    (* системный номер файла *)
+        mov     cx, [bp][num]       (* количество байтов для чтения *)
+(*%F NearPtr *)
+        lds     dx, [bp][buffer]    (* адрес буфера *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, [bp][buffer]    (* смещение адреса буфера *)
+(*%E *)
+(*%E *)
+        mov     ah, 3FH             (* функция чтения файла *)
+        int     21H                 (* обращение к прерыванию 21 *)
+        jnc     readOK
+        mov     ax, -1              (* возврат -1, если ошибка *)
+readOK:
+(*%F NearPtr *)
+        pop     ds
+(*%E *)
+        pop     dx
+    	pop  	cx
+        pop     bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- запись файла ------------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _write_file :
+
+(* int write_file(int handle, void *buffer, int num) *)
+
+(*%F RegParam *)
+handle  = frame
+buffer  = 2+frame
+(*%F NearPtr *)
+num     = 6+frame
+(*%E *)
+(*%T NearPtr *)
+num     = 4+frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+        push    bx
+        push    cx
+        push    dx
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     ds, cx              (* сегмент адреса буфера *)
+        mov     cx, dx              (* количество байтов для чтения *)
+        mov     dx, bx              (* смещение адреса буфера *)
+        mov     bx, ax              (* системный номер файла *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, bx              (* смещение адреса буфера *)
+        mov     bx, ax              (* системный номер файла *)
+(*%E *)                             (* cx = cx *)
+(*%E *)
+(*%F RegParam *)
+        mov     bx, [bp][handle]    (* системный номер файла *)
+        mov     cx, [bp][num]       (* количество байтов для чтения *)
+(*%F NearPtr *)
+        lds     dx, [bp][buffer]    (* адрес буфера *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, [bp][buffer]    (* смещение адреса буфера *)
+(*%E *)
+(*%E *)
+        mov     ah, 40H             (* функция записи файла *)
+        int     21H                 (* обращение к прерыванию 21 *)
+        jnc     writeOK
+        mov     ax, -1              (* возврат -1, если ошибка *)
+writeOK:
+(*%F NearPtr *)
+        pop     ds
+(*%E *)
+        pop     dx
+        pop     cx
+    	pop  	bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- установка позиции файла -------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _seek_file :
+
+(* long seek_file(int handle, long offset, int where) *)
+
+(*%F RegParam *)
+handle   = frame
+ofset    = 2+frame
+where    = 6+frame
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+        push    bx
+        push    cx
+(*%T RegParam *)
+        push    dx
+        mov     dx, bx              (* младшая часть смещения *)
+        mov     bx, ax              (* системный номер файла *)
+        pop     ax                  (* код режима *)
+(*%E *)                             (* cx = cx *)
+(*%F RegParam *)
+        mov     al, [bp][where]     (* код режима *)
+        mov     dx, [bp][ofset]     (* младшая часть смещения *)
+        mov     cx, [bp][ofset][2]  (* старшая часть смещения *)
+        mov     bx, [bp][handle]    (* системный номер файла *)
+(*%E *)
+        mov     ah, 42H             (* функция перемещения указателя *)
+        int     21H                 (* обращение к прерыванию 21 *)
+        jnc     seekOK
+        mov     ax, -1              (* возврат -1, если ошибка *)
+        cwd                         (* преобразовать слово в *)
+seekOK:                             (* двойное слово *)
+        pop     cx
+        pop     bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- время создания файла ----------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public _file_time :
+
+(* int file_time(int handle, int mode, unsigned *date, unsigned *time) *)
+
+(*%F RegParam *)
+RetSize = 0
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+RetSize = 4
+(*%E *)
+(*%T NearPtr *)
+RetSize = 0
+(*%E *)
+(*%E *)
+
+(*%F RegParam *)
+handle  = frame
+mode    = 2+frame
+date    = 4+frame
+(*%F NearPtr *)
+time    = 8+frame
+(*%E *)
+(*%T NearPtr *)
+time    = 6+frame
+(*%E *)
+(*%E *)
+
+(*%T RegParam *)
+(*%F NearPtr *)
+date    = -4
+time    = frame
+(*%E *)
+(*%T NearPtr *)
+date    = -2
+time    = -4
+(*%E *)
+locals  = 4
+(*%E *)
+
+    	push 	bp
+    	mov  	bp, sp
+(*%T RegParam *)
+    	sub  	sp, locals
+    	push 	dx
+(*%F NearPtr *)
+    	mov  	[bp][date], cx      (* младший адрес даты *)
+    	mov  	[bp][date][2], dx   (* старший адрес даты *)
+(*%E *)                             (* адрес времени уже в стеке *)
+(*%T NearPtr *)
+    	mov  	[bp][date], cx      (* адрес даты *)
+    	mov  	[bp][time], dx      (* адрес времени *)
+(*%E *)
+(*%E *)
+        push    bx
+(*%F NearPtr *)
+    	les  	bx, [bp][date]      (* адрес даты в es:bx *)
+    	mov  	dx, es:[bx]         (* дату в dx *)
+    	les  	bx, [bp][time]      (* адрес времени в es:bx *)
+    	mov  	cx, es:[bx]         (* время в cx *)
+(*%E *)
+(*%T NearPtr *)
+    	mov  	bx, [bp][date]      (* адрес даты в bx *)
+    	mov  	dx, [bx]            (* дату в dx *)
+    	mov  	bx, [bp][time]      (* адрес времени в bx *)
+    	mov  	cx, [bx]            (* время в cx *)
+(*%E *)
+        pop     bx
+(*%F RegParam *)
+    	mov  	bx, [bp][handle]    (* системный номер файла *)
+    	mov     al, [bp][mode]      (* режим *)
+(*%E *)
+(*%T RegParam *)
+        xchg    ax, bx
+(*%E *)
+    	mov  	ah, 57H
+    	int  	21H
+    	jc   	Error
+(*%F NearPtr *)
+    	les  	bx, [bp][date]      (* адрес даты в es:bx *)
+    	mov  	es:[bx], dx         (* дату из dx в es:bx *)
+    	les  	bx, [bp][time]      (* адрес времени в es:bx *)
+    	mov  	es:[bx], cx         (* время из cx в es:bx *)
+(*%E *)
+(*%T NearPtr *)
+    	mov  	bx, [bp][date]      (* адрес даты в bx *)
+    	mov  	[bx], dx            (* дату из dx в bx *)
+    	mov  	bx, [bp][time]      (* адрес времени в bx *)
+    	mov  	[bx], cx            (* время из cx в bx *)
+(*%E *)
+    	xor     ax, ax              (* при успешном завершении *)
+Error:
+(*%T RegParam *)
+    	pop     dx
+(*%E *)
+(*%T RegParam *)
+    	mov     sp, bp
+(*%E *)
+    	pop     bp
+(*%F sameCS *)
+    	ret     far RetSize
+(*%E *)
+(*%T sameCS *)
+    	ret     RetSize
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- атрибуты файла ----------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select _TEXT
+
+public  _file_attrib :
+
+(* int  file_attrib(char *path, int mode, int attribute) *)
+
+
+(*%F RegParam *)
+path   = frame
+(*%F NearPtr *)
+mode = 4+frame
+attrib  = 6+frame
+(*%E *)
+(*%T NearPtr *)
+mode = 2+frame
+attrib  = 4+frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+        push    cx
+        push    dx
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        push    cx
+        mov     cx, dx              (* атрибут *)
+        mov     dx, ax              (* смещение имени файла *)
+        mov     ds, bx              (* сегмент имени файла *)
+        pop     ax                  (* режим *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, ax              (* смещение имени файла *)
+        mov     ax, bx              (* режим *)
+(*%E *)
+(*%E *)
+(*%F RegParam *)
+        mov     al, [bp][mode]      (* режим *)
+        mov     cx, [bp][attrib]    (* атрибут *)
+(*%F NearPtr *)
+        lds     dx, [bp][path]      (* имя файла *)
+(*%E *)
+(*%T NearPtr *)
+        mov     dx, [bp][path]      (* имя файла *)
+(*%E *)
+(*%E *)
+        mov     ah, 43H             (* функция работы с атрибутом *)
+        int     21H
+        jnc     chSuccess
+        mov     ax, -1              (* возврат -1, если ошибка *)
+        jmp     chDone
+chSuccess:
+        mov     ax, cx              (* возврат атрибута *)
+chDone:
+(*%F NearPtr *)
+        pop     ds
+(*%E *)
+        pop     dx
+        pop     cx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- мелодия------------------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(CODE,28H)
+
+select _TEXT
+
+public _play_lpt1 :
+
+(* void play_lpt1( unsigned length, void *buffer, unsigned pause ) *)
+
+(*%F RegParam *)
+length  = frame
+buffer  = 2+frame
+(*%F NearPtr *)
+pause   = 6+frame
+(*%E *)
+(*%T NearPtr *)
+pause   = 4+frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+		push	bx
+    	push 	cx
+    	push	dx
+        push    si
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+        mov     si, bx              (* смещение адреса буфера *)
+        mov     bx, ax
+(*%F NearPtr *)
+        mov     ds, cx              (* сегмент адреса буфера *)
+        mov     cx, dx              (* размер паузы *)
+(*%E *)
+(*%E *)
+(*%F RegParam *)
+        mov     bx, [bp][length]    (* количество байтов для чтения *)
+        mov     cx, [bp][pause]     (* размер паузы *)
+(*%F NearPtr *)
+        lds     si, [bp][buffer]    (* адрес буфера *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, [bp][buffer]    (* смещение адреса буфера *)
+(*%E *)
+(*%E *)
+        mov     dx, 3BCH			(* адрес порта LPT1 *)
+read:
+        dec     bx                  (* вычисление конца буфера *)
+        jz      endlp               (* если да, то выход *)
+        mov     ax, cx              (* сохранение размера паузы *)
+lp:
+        loop    lp                  (* пауза *)
+        mov     cx, ax              (* востановление размера паузы *)
+        lodsb                       (* очередной элемент буфера *)
+        out     dx, al              (* посылка в порт значения *)
+        jmp     read                (* переход на повтор *)
+endlp:
+(*%F NearPtr *)
+        pop     ds
+(*%E *)
+        pop     si
+        pop     dx
+    	pop  	cx
+        pop     bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- сравнение строки со значением в памяти ----------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _DATA(DATA,28H)
+segment _TEXT(CODE,28H)
+
+select  _TEXT
+
+public _comp_str_mem :
+
+(* unsigned comp_str_mem( char *str, unsigned seg, unsigned ofs ) *)
+
+(*%F RegParam *)
+str     = frame
+(*%F NearPtr *)
+seg     = 4+frame
+ofs     = 6+frame
+(*%E *)
+(*%T NearPtr *)
+seg     = 2+frame
+ofs     = 4+frame
+(*%E *)
+
+    	push 	bp
+        mov     bp, sp
+(*%E *)
+        push    si
+        push    di
+        push	es
+(*%F NearPtr *)
+        push    ds
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     ds, bx              (* сегмент строки *)
+        mov     si, ax              (* смещение строки *)
+        mov     es, cx              (* сегмент памяти *)
+        mov     di, dx              (* смещение памяти *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, ax              (* смещение строки *)
+        mov     es, bx              (* сегмент памяти *)
+        mov     di, cx              (* смещение памяти *)
+(*%E *)
+(*%E *)
+(*%F RegParam *)
+        mov     ax, [bp][seg]       (* сегмент памяти *)
+        mov     es, ax
+        mov     di, [bp][ofs]       (* смещение памяти *)
+(*%F NearPtr *)
+        lds     si, [bp][str]       (* строка *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, [bp][str]       (* смещение строки *)
+(*%E *)
+(*%E *)
+        mov     ah, 1
+begin:
+        lodsb                       (* загрузить в al очередной элемент *)
+        or      al, al              (* проверить на конец строки *)
+        jz      end_str
+        scasb                       (* сравнить элемент с содержимым памяти *)
+        jne     no_equ
+        jmp     begin
+no_equ:
+        xor     ax, ax              (* обнулить, если не еквивалентно *)
+end_str:
+(*%F NearPtr *)
+    	pop  	ds
+(*%E *)
+        pop     es
+    	pop  	di
+        pop     si
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- очистка экрана ----------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+section
+segment _DATA(DATA,28H)
+segment _TEXT(CODE,28H)
+
+select  _TEXT
+
+public _clear_screen :
+
+(* void clear_screen() *)
+
+        push    bx
+        push    cx
+        push    dx
+        mov     ax, 0600H           (* номер функции и заполнение окна *)
+        xor     cx, cx              (* верхний левый угол *)
+        mov     dx, 184FH           (* нижний правый угол *)
+        mov     bh, 7               (* атрибут заполнителя *)
+        int     10H                 (* переместить окно вверх *)
+        pop     dx
+        pop     cx
+        pop     bx
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- преобразование двоичного числа в десятичное -----------------------*)
+(*------------------------------------------------------------------------*)
+section
+segment _DATA(DATA,28H)
+segment _TEXT(CODE,28H)
+
+select  _TEXT
+
+public _bin_to_dec :
+
+(* void bin_to_dec( unsigned long *bin, char *dec )*)
+
+(*%F RegParam *)
+bin     = frame
+(*%T NearPtr *)
+dec     = 2+frame
+(*%E *)
+(*%F NearPtr *)
+dec     = 4+frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+(*%E *)
+        push    bx
+        push    cx
+        push    di
+        push    si
+        push    ds
+        push    es
+(*%F RegParam *)
+(*%T NearPtr *)
+        mov     si, [bp][dec]       (* смещение ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%F NearPtr *)
+        lds     si, [bp][dec]       (* ASCII строка *)
+        les     di, [bp][dec]       (* ASCII строка *)
+(*%E *)
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     si, cx              (* смещение ASCII строки *)
+        mov     ds, dx              (* сегмент ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, bx              (* смещение ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%E *)
+        push    ax
+        push    cx
+        mov     cx, 10
+cloop:
+        lodsb
+        mov     al, 30H
+        stosb
+        loop    cloop
+        pop     cx
+        pop     ax
+(*%F RegParam *)
+(*%T NearPtr *)
+        mov     si, [bp][bin]       (* смещение двоичного числа *)
+        mov     di, si              (* смещение двоичного числа *)
+        push    ds                  (* сегмент двоичного числа *)
+        pop     es                  (* сегмент двоичного числа *)
+(*%E *)
+(*%F NearPtr *)
+        lds     si, [bp][bin]       (* адрес двоичного числа в ds:si *)
+        les     di, [bp][bin]       (* адрес двоичного числа в es:di *)
+(*%E *)
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     si, ax              (* смещение двоичного числа *)
+        mov     ds, bx              (* сегмент двоичного числа *)
+        mov     di, si              (* смещение двоичного числа *)
+        push    ds
+        pop     es                  (* сегмент двоичного числа *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, ax              (* смещение двоичного числа *)
+        mov     di, si              (* смещение двоичного числа *)
+        push    ds
+        pop     es                  (* сегмент двоичного числа *)
+(*%E *)
+(*%E *)
+        mov     byte [save], 20H    (* количество бит в двоичном числе *)
+next:
+        clc
+        cld
+        push    ds                  (* сохранить адрес двоичного числа *)
+        push    si
+        push    es
+        push    di
+        push    cx
+        mov     cx, 4               (* количество байт в двоичном числе *)
+bloop:
+        lodsb                       (* загрузить младший байт *)
+        rcl     al, 1               (* сдвинуть, вытолнув старший бит *)
+        stosb                       (* поместить число обратно *)
+        loop    bloop               (* повторять 4 раза *)
+        pop     cx
+(*%F RegParam *)
+(*%T NearPtr *)
+        mov     si, [bp][dec]       (* смещение ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%F NearPtr *)
+        lds     si, [bp][dec]       (* ASCII строка *)
+        les     di, [bp][dec]       (* ASCII строка *)
+(*%E *)
+(*%E *)
+(*%T RegParam *)
+(*%F NearPtr *)
+        mov     si, cx              (* смещение ASCII строки *)
+        mov     ds, dx              (* сегмент ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%T NearPtr *)
+        mov     si, bx              (* смещение ASCII строки *)
+        mov     di, si              (* смещение ASCII строки *)
+        push    ds
+        pop     es                  (* сегмент ASCII строки *)
+(*%E *)
+(*%E *)
+        pushf
+        add     si, 9
+        add     di, 9
+        popf
+        std
+        push    cx
+        mov     cx, 10              (* длина ASCII строки *)
+dloop:
+        lodsb                       (* загрузить очередной элемент строки *)
+        rcl     al, 1               (* сдвинуть циклически на 1 бит *)
+        and     al, 1FH             (* выделить 5 младших бит *)
+        cmp     al, 0AH             (* если было меньше 5 *)
+        pushf
+        jc      no_conv
+        add     al, 06H             (* добавить до BCD формата *)
+no_conv:
+        or      al, 30H             (* инициализировать старшую часть *)
+        popf
+        cmc                         (* инвертировать CF флаг *)
+        stosb                       (* разместить байт *)
+        loop    dloop
+        pop     cx
+        pop     di
+        pop     es
+        pop     si
+        pop     ds
+        dec     byte [save]         (* уменьшить на 1 бит *)
+        jnz     next                (* обработка всех бит *)
+        cld
+        pop     es
+        pop     ds
+        pop     si
+        pop     di
+        pop     cx
+        pop     bx
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+save:   db      0
+
+(*------------------------------------------------------------------------*)
+(*---- чтение клавиши ESC ------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _DATA(DATA,28H)
+segment _TEXT(CODE,28H)
+
+select  _TEXT
+
+public _key_read :
+
+(* int key_read() *)
+
+        mov     ah, 1               (* функция опроса клавиатуры *)
+        int     16H                 (* без ожидания *)
+        jz      no_key
+        mov     ah, 0               (* чтение скэн-кода *)
+        int     16H
+        jmp     yes
+no_key:
+        xor     ax, ax
+yes:
+(*%F sameCS *)
+        ret     far   0
+(*%E *)
+(*%T sameCS *)
+        ret     0
+(*%E *)
+
+(*------------------------------------------------------------------------*)
+(*---- вывод окна --------------------------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _DATA(DATA,28H)
+segment _TEXT(CODE,28H)
+
+select  _TEXT
+
+public _win :
+
+(*
+void win( int x,   int y,    int snow, int mode,
+          int atr, int lenx, int leny, void *buffer)
+
+mode         0  без запоминания экрана
+mode         1  с запоминанием  экрана
+atr          0  с переменным атрибутом
+snow         0  снег отсутсвует
+snow         1  снег присутсвует
+*)
+
+(*%F RegParam *)
+RetSize = 0
+(*%E *)
+(*%T RegParam *)
+(*%T NearPtr *)
+RetSize = 8
+(*%E *)
+(*%F NearPtr *)
+RetSize = 10
+(*%E *)
+(*%E *)
+
+(*%F RegParam *)
+x       = frame
+y       = 2+frame
+snow    = 4+frame
+mode    = 6+frame
+atr     = 8+frame
+lenx    = 10+frame
+leny    = 12+frame
+buffer  = 14+frame
+(*%E *)
+
+(*%T RegParam *)
+(*%F NearPtr *)
+atr     = 8+frame
+lenx    = 6+frame
+leny    = 4+frame
+(*%E *)
+(*%T NearPtr *)
+atr     = 6+frame
+lenx    = 4+frame
+leny    = 2+frame
+(*%E *)
+buffer  = frame
+(*%E *)
+
+        push    bp
+        mov     bp, sp
+        push    si
+        push    di
+        push    ds
+        push    es
+(*%F RegParam *)
+        push    bx
+        push    cx
+        push    dx
+        mov     al, [bp][x]         (* координата x *)
+        mov     bl, [bp][y]         (* координата y *)
+        mov     cl, [bp][snow]      (* "снег" *)
+        mov     dl, [bp][mode]      (* режим вывода *)
+(*%E *)
+        push    ax                  (* сохранить координаты *)
+        push    bx                  (* x и y *)
+        mov     cs:[d_snow], cl     (* записать "снег" *)
+        mov     cs:[d_mode], dl     (* и режим *)
+        push    cs
+        pop     ds                  (* cs = ds *)
+        mov     ax, 40H             (* сегмент системной области *)
+        mov     es, ax
+        mov     dx, 3D4H            (* порт для цветного монитора *)
+        mov     di, 0B800H          (* сегмент отображения *)
+        cmp     byte es:[49H], 7    (* на BW режим 7 *)
+        jne     no_BW               (* если не 7, значит цветной *)
+        mov     dx, 3B4H            (* порт для монохромного монитора *)
+        mov     di, 0B000H          (* сегмент отображения *)
+        mov     byte cs:[d_snow], 0 (* снег отсутсвует *)
+no_BW:
+        mov     al, 0CH             (* старший адрес смещения страницы *)
+        out     dx, al
+        inc     dx
+        in      al, dx
+        mov     ah, al
+        dec     dx
+        mov     al, 0DH             (* младший адрес смещения страницы *)
+        out     dx, al
+        inc     dx
+        in      al, dx
+        mov     cl, 3
+        shr     ax, cl
+        add     di, ax              (* в di сегментное смещение страницы *)
+        pop     ax                  (* координата y *)
+        pop     si                  (* координата x *)
+        mov     cl, 4
+        shl     ax, cl              (* 16Y *)
+        add     si, ax
+        shl     ax, 1
+        shl     ax, 1
+        add     si, ax              (* +64Y=80Y *)
+        shl     si, 1
+        xor     bx, bx
+        mov     dx, [bp][leny]      (* длина окна по y *)
+start:
+        push    di                  (* сохранение сегмента смещения страницы *)
+        push    si                  (* сохранение адреса начала отображения *)
+        mov     cx, [bp][lenx]      (* длина окна по x  *)
+        push    cx                  (* сохранение длины окна по x *)
+        mov     ds, di
+        cmp     byte cs:[d_mode], 0 (* если без запоминания экрана *)
+        jz      end1
+        mov     di, str             (* адрес буферной строки *)
+        push    cs
+        pop     es
+        cmp     byte cs:[d_snow], 0 (* если нет снега *)
+        jz      no_snow1
+        pushf
+        push    bx
+        push    dx
+        mov     dx, 3DAH            (* статаус *)
+        add     cx, cx
+        mov     bl, 1
+        cld
+        sti
+wait1:
+        in      al, dx              (* обратный ход луча? *)
+        rcr     al, 1
+        jc      wait1
+        cli
+wait2:
+        in      al, dx              (* конец отображения? *)
+        rcr     al, 1
+        jnc     wait2
+        movsb                       (* переслать один байт *)
+        sti
+        loop    wait1               (* повторить для каждого байта *)
+        pop     dx
+        pop     bx
+        popf
+        jmp     end1
+no_snow1:
+        cld
+        rep
+        movsw                       (* пересылка без опроса *)
+end1:
+        pop     cx
+        pop     si
+        push    si
+        push    cx
+        mov     di, si
+        push    ds
+        pop     es
+(*%F NearPtr *)
+        lds     si, [bp][buffer]    (* ds:si - массив отображения *)
+(*%E *)
+(*%T NearPtr *)
+        mov     ax, _DATA           (* сегмент данных *)
+        mov     ds, ax
+        mov     si, [bp][buffer]
+(*%E *)
+        mov     al, [bp][atr]       (* атрибут вывода *)
+        cmp     byte cs:[d_mode], 0
+        jz      nm1
+        cmp     al, 0
+        jz      nm2
+        mov     ax, [bp][lenx]      (* при выводе из середины массива *)
+        push    dx
+        mov     dx, [bp][leny]
+        mul     dx
+        pop     dx
+        add     si, ax
+        jmp     nm3
+nm1:
+        cmp     al, 0
+        jnz     nm3
+nm2:
+        add     si, bx              (* переход на следующую строку *)
+nm3:
+        add     si, bx
+        cmp     byte cs:[d_snow], 0
+        je      no_snow2
+        mov     ah, [bp][atr]
+        cmp     ah, 0
+        jz      no_atr
+        pushf
+        push    bx
+        push    dx
+        mov     dx, 3DAH
+        mov     bl, 1
+        cld
+        sti
+        push    bp
+Bts1:
+        lodsb                         (* загрузка очередного байта *)
+        mov     bp, ax                (* сохранение его в bp *)
+wait3:
+        in      al, dx
+        rcr     al, 1
+        jc      wait3
+        cli
+wait4:
+        in      al, dx
+        rcr     al, 1
+        jnc     wait4
+        xchg    ax, bp
+        stosw                         (* размещение с атрибутом *)
+        sti
+        loop    Bts1
+        pop     bp
+        pop     dx
+        pop     bx
+        popf
+        jmp     end2
+no_atr:
+        pushf
+        push    bx
+        push    dx
+        mov     dx, 3DAH
+        mov     bl, 1
+        cld
+        sti
+        push    bp
+Bts2:
+        lodsw                         (* загрузка очередного байта с *)
+        mov     bp, ax                (* атрибутом *)
+wait5:
+        in      al, dx
+        rcr     al, 1
+        jc      wait5
+        cli
+wait6:
+        in      al, dx
+        rcr     al, 1
+        jnc     wait6
+        xchg    ax, bp
+        stosw
+        sti
+        loop    Bts2
+        pop     bp
+        pop     dx
+        pop     bx
+        popf
+        jmp     end2
+no_snow2:
+        mov     ah, [bp][atr]
+        cld
+        cmp     ah, 0
+        jz      l_next2
+l_next1:
+        lodsb
+        stosw
+        loop    l_next1
+        jmp     end2
+l_next2:
+        rep
+        movsw
+end2:                                (* пересылка сохраненной строки *)
+        cmp     byte cs:[d_mode], 0  (* в подготовленный массив *)
+        jz      end3
+        pop     cx
+        push    cx
+        push    cs
+        pop     ds
+        mov     si, str
+(*%F NearPtr *)
+        les     di, [bp][buffer]
+(*%E *)
+(*%T NearPtr *)
+        mov     ax, _DATA
+        mov     es, ax
+        mov     di, [bp][buffer]
+(*%E *)
+        add     di, bx
+        add     di, bx
+        cld
+        rep
+        movsw
+end3:
+        pop     cx
+        pop     si
+        add     si, 160              (* инкремент для следующей строки *)
+        mov     ax, [bp][lenx]
+        add     bx, ax
+        pop     di
+        dec     dx
+        jnz     start
+(*%F RegParam *)
+        pop     dx
+        pop     cx
+        pop     bx
+(*%E *)
+        pop     es
+        pop     ds
+        pop     di
+        pop     si
+        pop     bp
+(*%F sameCS *)
+        ret     far RetSize
+(*%E *)
+(*%T sameCS *)
+        ret     RetSize
+(*%E *)
+d_snow: db      0                    (* "снег" *)
+d_mode: db      0                    (* режим вывода *)
+str:    db      '                    (* буфер строки *)                                                                                                                                             '
+
+(*------------------------------------------------------------------------*)
+(*---- передача байта на принтер -----------------------------------------*)
+(*------------------------------------------------------------------------*)
+
+section
+segment _TEXT(CODE,28H)
+segment _DATA(DATA,28H)
+
+select  _TEXT
+
+public _print :
+
+(* int _print( int ch, int mode ) *)
+
+(*%F RegParam *)
+ch      = frame
+mode    = 2 + frame
+
+    	push 	bp
+        mov     bp, sp
+    	mov  	al, [bp][ch]        (* байт, посылаемый на принтер *)
+    	mov     ah, [bp][mode]      (* режим *)
+(*%E *)
+(*%T RegParam *)
+        mov     ah, bl
+(*%E *)
+        mov     dx, 0               (* номер принтера *)
+        int     17H                 (* обращение к прерыванию 17 *)
+        test    ah, 8
+        jnz     err
+        xor     ax, ax
+err:
+(*%F RegParam *)
+        pop     bp
+(*%E *)
+(*%F sameCS *)
+        ret     far  0
+(*%E *)
+(*%T sameCS *)
+        ret      0
+(*%E *)
+
+ end
+
